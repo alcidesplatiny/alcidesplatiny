@@ -1,151 +1,188 @@
+from streamlit import exception
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
+import plotly.express as px
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+try:
+    # Configurações iniciais
+    st.set_page_config(page_title="Panorama de Imóveis - Alcides Platiny", layout="wide")
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+        
+    # Cabeçalho
+    st.header(":red[Dashboard - Panorama de Imóveis para Aluguel no Brasil]", divider="red")
+   
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+    # Importação e tratamento inicial dos dados
+    dados = pd.read_csv("houses_to_rent_v2.csv")
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+    # Converter dados da Dataframe
+    dados_imoveis = dados.rename(columns = {"city": "Cidade", "area": "Área do imóvel", "rooms": "Qtd Quartos", "bathroom": "Qtd Banheiros", "parking spaces": "Qtd Garagens", "floor": "Andar do Imóvel", "animal": "Permite Animais", "furniture": "Mobiliado", "hoa (R$)": "Taxa de Condomínio", "rent amount (R$)": "Valor do Aluguel (R$)", "property tax (R$)": "Valor do IPTU (R$)", "fire insurance (R$)": "Seguro contra Incêndio (R$)", "total (R$)": "Total (R$)" })
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+    # Tconverter colunas "animal" e "furniture":
+    dados_imoveis["Permite Animais"] = dados_imoveis["Permite Animais"].replace({"acept": "Sim", "not acept": "Não"})
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
+    dados_imoveis["Mobiliado"] = dados_imoveis["Mobiliado"].replace({"furnished": "Sim", "not furnished": "Não"})
+
+    # Faixas de valores de aluguel para segmentação dos dados no dashboard
+    # Função para categorizar as faixas de preço do aluguel
+    def categoria_aluguel(valor):
+        if valor < 1000:
+            return "até R$ 1000"
+        elif 1000 <= valor <2000:
+            return "Entre R$ 1000 e R$ 1999"
+        elif 2000 <= valor <3000:
+            return "Entre R$ 2000 e R$ 2999"
+        elif 3000 <= valor <4000:
+            return "Entre R$ 3000 e R$ 3999"
+        elif 4000 <= valor <5000:
+            return "Entre R$ 4000 e R$ 4999"
+        elif 5000 <= valor:
+            return "Acima de R$ 5000"
+        
+
+    # Função à coluna de valor do aluguel
+    dados_imoveis["Faixas de Preço"] = dados_imoveis["Valor do Aluguel (R$)"].apply(categoria_aluguel)
+
+    # Barra lateral para filtragem
+    with st.sidebar:
+
+        # Cabeçalho e informações do aluno
+        st.subheader(":red[Discente: Aalcides Platiny Alves Batista]")
+        st.subheader(":red[Matrícula: 20242003282]", divider="red")
+
+        st.write("Selecione as opções abaixo para visualizar:")
+
+        cidade = st.multiselect("Cidade", options=dados_imoveis["Cidade"].unique(), default=dados_imoveis["Cidade"].unique())
+        mobiliado = st.selectbox("Imóvel Mobiliado?", options=dados_imoveis["Mobiliado"].unique())
+        aceita_animais = st.selectbox("Aceita Animais?", options=dados_imoveis["Permite Animais"].unique())
+        faixa_preço = st.selectbox("Escolha a faixa de preços de aluguel", options = ["até R$ 1000", "Entre R$ 1000 e R$ 1999", "Entre R$ 2000 e R$ 2999", "Entre R$ 3000 e R$ 3999", "Entre R$ 4000 e R$ 4999", "Acima de R$ 5000"])
+        quartos = st.selectbox("Número de Quartos", options=sorted(dados_imoveis["Qtd Quartos"].unique()))
+        banheiros = st.selectbox("Número de Banheiros", options = sorted(dados_imoveis["Qtd Banheiros"].unique()))
+
+    # Filtrar os dados com base nas seleções
+    dados_filtro = dados_imoveis[
+        (dados_imoveis["Cidade"].isin(cidade)) &
+        (dados_imoveis["Mobiliado"] == (mobiliado)) &
+        (dados_imoveis["Permite Animais"] == (aceita_animais)) &
+        (dados_imoveis["Faixas de Preço"] == (faixa_preço)) &
+        (dados_imoveis["Qtd Quartos"] == (quartos)) &
+        (dados_imoveis["Qtd Banheiros"] == (banheiros))
+    ]
+
+    # Dividindo a tela
+
+    col1, col2 = st.columns(2)
+    col3, col4 = st.columns(2)
+
+    # Segmentando o dataset para os gráficos
+
+    # Quantidade de imóveis por municipio
+    imoveis_qtd = dados_imoveis.groupby("Cidade")["Cidade"].count() # dados estáticos, sem relação com os elementos de seleção
+    imoveis_cidade = imoveis_qtd.sort_values(ascending=False) # dados estáticos, sem relação com os elementos de seleção
+
+    imoveis_qtd_fil = dados_filtro.groupby("Cidade")["Cidade"].count() # dados filtrados pelos elementos de seleção
+    imoveis_cidade_fil = imoveis_qtd_fil.sort_values(ascending=False) # dados filtrados pelos elementos de seleção
+
+
+    fig_qtd = px.bar(imoveis_cidade, x = imoveis_cidade.index, y = imoveis_cidade.values, color="Cidade", text_auto=True, title= "Total de Imóveis Disponíveis por Múnicipio")
+    
+    # Remove linhas dos eixos
+    fig_qtd.update_layout(
+        xaxis=dict(showgrid=False),  # Remove linha do eixo X
+        yaxis=dict(showgrid=False)   # Remove linha do eixo Y
     )
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+    # Remove linhas de grade
+    fig_qtd.update_layout(
+    yaxis=dict(showticklabels=False)   # Remove linha do eixo Y
+    )
 
-    return gdp_df
+    # Nome dos eixos
+    fig_qtd.update_layout(
+        xaxis_title='Múnicipios',
+        yaxis_title=None
+    )
 
-gdp_df = get_gdp_data()
+    # Filtro de seleção para a quantidade de imóveis por Múnicipio
+    fig_qtd_fil = px.bar(imoveis_cidade_fil, x = imoveis_cidade_fil.index, y = imoveis_cidade_fil.values, color="Cidade", text_auto=True, title= "Total de Imóveis Disponíveis por Múnicipios (Filtrado)")
+    
+    # Remove linhas dos eixos
+    fig_qtd_fil.update_layout(
+        xaxis=dict(showgrid=False),  # Remove linha do eixo X
+        yaxis=dict(showgrid=False)   # Remove linha do eixo Y
+    )
+    # Removendo as linhas de grade
+    fig_qtd_fil.update_layout(
+        yaxis=dict(showticklabels=False)   # Remover a linha do eixo Y
+    )
 
-# -----------------------------------------------------------------------------
-# Draw the actual page
+    # Nome dos eixos
+    fig_qtd_fil.update_layout(
+        xaxis_title='Múnicipios',
+        yaxis_title=None
+    )
 
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
+    # Plotagem dos gráficos
+    col1.plotly_chart(fig_qtd)
+    col3.plotly_chart(fig_qtd_fil)
 
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
+    # Valor médio do aluguel por Múnicipio
+    aluguel_cid = dados_imoveis.groupby("Cidade")["Valor do Aluguel (R$)"].mean() # dados estáticos, sem relação com os elementos de seleção
+    aluguel_medio = aluguel_cid.sort_values(ascending=False) # dados estáticos, sem relação com os elementos de seleção
 
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
-
-''
-''
+    aluguel_cid_fil = dados_filtro.groupby("Cidade")["Valor do Aluguel (R$)"].mean() # dados filtrados pelos elementos de seleção
+    aluguel_medio_fil = aluguel_cid_fil.sort_values(ascending=False) # dados filtrados pelos elementos de seleção
 
 
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
+    fig_alu = px.bar(aluguel_medio, x = aluguel_medio.index, y = aluguel_medio.values, color="Valor do Aluguel (R$)", text_auto=True, title= "Valor médio do aluguel por Múnicipio - em R$")
+    
+    # Removendo as linhas dos eixos
+    fig_alu.update_layout(
+        xaxis=dict(showgrid=False),  # Remover a linha do eixo X
+        yaxis=dict(showgrid=False)   # Remover a linha do eixo Y
+    )
+    # Removendo as linhas de grade
+    fig_alu.update_layout(
+    
+        yaxis=dict(showticklabels=False)   # Remover a linha do eixo Y
+    )
 
-st.header(f'GDP in {to_year}', divider='gray')
+    # Nome dos eixos
+    fig_alu.update_layout(
+        xaxis_title='Múnicipios',
+        yaxis_title=None
+    )
 
-''
+    # Gráfico de seleção para o valor médio do aluguel por municipio
+    fig_alu_fil = px.bar(aluguel_medio_fil, x = aluguel_medio_fil.index, y = aluguel_medio_fil.values, color="Valor do Aluguel (R$)", text_auto=True, title= "Valor médio do aluguel por Múnicipio - em R$ (Filtrado)")
+    
+    # Remove as linhas dos eixos
+    fig_alu_fil.update_layout(
+        xaxis=dict(showgrid=False),  # Remove linha do eixo X
+        yaxis=dict(showgrid=False)   # Remove linha do eixo Y
+    )
+    # Remove linhas de grade
+    fig_alu_fil.update_layout(
+        yaxis=dict(showticklabels=False)   # Remove linha do eixo Y
+    )
 
-cols = st.columns(4)
+    # Nomeando os eixos
+    fig_alu_fil.update_layout(
+        xaxis_title='Municipios',
+        yaxis_title=None
+    )
 
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
+    # Plotagem dos gráficos
+    col2.plotly_chart(fig_alu)
+    col4.plotly_chart(fig_alu_fil)
 
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
+    # Exibe tabela
+    st.subheader(":red[Resultado Filtrado]", divider="red")
+    
+    st.dataframe(dados_filtro.style.highlight_max(axis=0, color="#5f6362"))
 
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
 
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+except:
+    st.error(
+        'A seleção não retornou dados.',)
